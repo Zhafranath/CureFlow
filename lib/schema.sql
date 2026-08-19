@@ -157,3 +157,21 @@ on conflict (id) do nothing;
 insert into public.demo_doctor_requests (id, doctor_name, remedy_id, plant, complaint, status, created_at) values
 ('req1', 'dr. Anindya', 'r6', 'Daun mint', 'Tekanan darah tinggi', 'pending', (extract(epoch from now()) * 1000 - 3::bigint * 60 * 60 * 1000)::bigint)
 on conflict (id) do nothing;
+
+-- =====================================================================
+-- 6. STORAGE BUCKET & POLICIES (Untuk Integrasi ESP32-CAM)
+-- =====================================================================
+
+-- Membuat bucket penyimpanan baru bernama 'plant-images' secara publik
+insert into storage.buckets (id, name, public)
+values ('plant-images', 'plant-images', true)
+on conflict (id) do nothing;
+
+-- Hapus policy lama jika ada untuk mencegah error duplikasi saat skema di-run ulang
+drop policy if exists "Akses Publik Penuh untuk plant-images" on storage.objects;
+
+-- Membuat kebijakan (policy) agar aplikasi Next.js bebas mengunggah, membaca, memperbarui, dan menghapus gambar
+create policy "Akses Publik Penuh untuk plant-images"
+on storage.objects for all
+using ( bucket_id = 'plant-images' )
+with check ( bucket_id = 'plant-images' );
