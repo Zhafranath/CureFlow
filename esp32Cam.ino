@@ -2,6 +2,7 @@
 #include <HTTPClient.h>
 #include <esp_camera.h>
 #include <ArduinoJson.h>
+#include <WiFiClientSecure.h>
 
 // ==========================================
 // 1. KONFIGURASI WIFI & SERVER WEBSITE
@@ -107,8 +108,11 @@ void captureAndSendImage() {
   Serial.printf("Gambar berhasil diambil! Ukuran JPEG: %u bytes\n", fb->len);
 
   if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure(); // Bypass SSL certificate validation for Vercel
+    
     HTTPClient http;
-    http.begin(SERVER_URL);
+    http.begin(client, SERVER_URL);
 
     // Mengirim gambar sebagai multipart/form-data langsung dari RAM
     String boundary = "----ESP32CamBoundary";
@@ -175,13 +179,23 @@ unsigned long lastTriggerCheck = 0;
 const unsigned long TRIGGER_CHECK_INTERVAL = 2000; // Check trigger every 2 seconds
 
 void checkCameraTrigger() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[TRIGGER] WiFi terputus, membatalkan polling.");
+    return;
+  }
+  
+  Serial.print("[TRIGGER] Polling Vercel... ");
+  
+  WiFiClientSecure client;
+  client.setInsecure(); // Bypass SSL certificate validation for Vercel
   
   HTTPClient http;
-  http.begin(TRIGGER_URL);
+  http.begin(client, TRIGGER_URL);
   http.setTimeout(2500); // Short timeout to avoid stalling the loop
   
   int httpResponseCode = http.GET();
+  Serial.printf("HTTP Code: %d\n", httpResponseCode);
+  
   if (httpResponseCode == 200) {
     String response = http.getString();
     
@@ -199,10 +213,8 @@ void checkCameraTrigger() {
       Serial.println(error.c_str());
     }
   } else {
-    // Suppress spamming on connection errors (-1)
-    if (httpResponseCode != -1) {
-      Serial.printf("[TRIGGER] HTTP GET gagal, status code: %d\n", httpResponseCode);
-    }
+    Serial.printf("[TRIGGER] HTTP GET gagal, status code: %d (%s)\n", 
+                  httpResponseCode, http.errorToString(httpResponseCode).c_str());
   }
   http.end();
 }
