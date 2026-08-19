@@ -352,6 +352,7 @@ export default function TechnicianPage() {
   const handleCaptureAndAnalyze = async (imageInput?: File | string) => {
     setAnalyzing(true)
     setAnalysisError(null)
+    const userId = user?.id || '00000000-0000-0000-0000-000000000000'
 
     try {
       if (imageInput instanceof File || (typeof imageInput === 'string' && imageInput.startsWith('data:image'))) {
@@ -364,7 +365,7 @@ export default function TechnicianPage() {
           setPreviewImage(imageInput)
         }
 
-        const res = await fetch('/api/analyze-plant', {
+        const res = await fetch(`/api/analyze-plant?user_id=${userId}`, {
           method: 'POST',
           body: formData,
         })
@@ -381,7 +382,7 @@ export default function TechnicianPage() {
         const triggerRes = await fetch('/api/camera-trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'trigger' })
+          body: JSON.stringify({ action: 'trigger', userId })
         })
 
         if (!triggerRes.ok) {
@@ -403,19 +404,21 @@ export default function TechnicianPage() {
             fetch('/api/camera-trigger', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'reset' })
+              body: JSON.stringify({ action: 'reset', userId })
             }).catch(() => {})
             return
           }
 
           try {
-            const statusRes = await fetch('/api/camera-trigger')
+            const statusRes = await fetch(`/api/camera-trigger?user_id=${userId}`)
             if (statusRes.ok) {
               const statusData = await statusRes.json()
               
               if (statusData.status === 'success' && statusData.analysisResult) {
                 clearInterval(pollInterval)
-                setPreviewImage(`/images/esp32cam.jpg?t=${Date.now()}`)
+                const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://mtyrhkguoyttqiesjjxb.supabase.co'
+                const imageUrl = `${supabaseUrl}/storage/v1/object/public/plant-images/image_${userId}.jpg?t=${Date.now()}`
+                setPreviewImage(imageUrl)
                 setAnalysisResult(statusData.analysisResult)
                 setAnalyzing(false)
               } else if (statusData.status === 'error') {
@@ -470,13 +473,16 @@ export default function TechnicianPage() {
   // Load last analysis and image on mount or when switching to the analysis tab
   useEffect(() => {
     if (activeTab !== 'analysis') return
+    const userId = user?.id || '00000000-0000-0000-0000-000000000000'
     const fetchLastAnalysis = async () => {
       try {
-        const res = await fetch('/api/camera-trigger')
+        const res = await fetch(`/api/camera-trigger?user_id=${userId}`)
         if (res.ok) {
           const data = await res.json()
           if (data.status === 'success' && data.analysisResult) {
-            setPreviewImage(`/images/esp32cam.jpg?t=${Date.now()}`)
+            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://mtyrhkguoyttqiesjjxb.supabase.co'
+            const imageUrl = `${supabaseUrl}/storage/v1/object/public/plant-images/image_${userId}.jpg?t=${Date.now()}`
+            setPreviewImage(imageUrl)
             setAnalysisResult(data.analysisResult)
           }
         }
@@ -485,7 +491,7 @@ export default function TechnicianPage() {
       }
     }
     fetchLastAnalysis()
-  }, [activeTab])
+  }, [activeTab, user?.id])
 
   const activePumpsCount = (flowOn ? 1 : 0) + (drainOn ? 1 : 0) + (fillOn ? 1 : 0)
 

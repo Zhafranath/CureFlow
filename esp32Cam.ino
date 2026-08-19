@@ -10,8 +10,9 @@ const char* WIFI_SSID     = "Kunimitsu";
 const char* WIFI_PASSWORD = "1234554322";
 
 // URL Endpoint API analisis tanaman di website CureFlow (Vercel Production)
-const char* SERVER_URL    = "https://curetest.vercel.app/api/analyze-plant";
-const char* TRIGGER_URL   = "https://curetest.vercel.app/api/camera-trigger";
+// Pastikan user_id sesuai dengan ID Anda di database Supabase (tabel profiles)
+const char* SERVER_URL    = "https://curetest.vercel.app/api/analyze-plant?user_id=3684b391-5350-475f-a92c-4d453496188b";
+const char* TRIGGER_URL   = "https://curetest.vercel.app/api/camera-trigger?user_id=3684b391-5350-475f-a92c-4d453496188b";
 
 // ==========================================
 // 2. MODEL KAMERA & PIN CONFIGURATION (AI THINKER WITH PSRAM)

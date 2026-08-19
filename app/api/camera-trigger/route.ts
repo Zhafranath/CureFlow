@@ -1,49 +1,73 @@
 import { NextResponse } from 'next/server'
-import fs from 'fs'
-import path from 'path'
+import { supabase } from '@/lib/supabase'
 
-const STATE_DIR = path.join(process.cwd(), 'public', 'images')
-const STATE_FILE = path.join(STATE_DIR, 'camera_state.json')
+const BUCKET_NAME = 'plant-images'
 
-function ensureDirExists() {
-  if (!fs.existsSync(STATE_DIR)) {
-    fs.mkdirSync(STATE_DIR, { recursive: true })
-  }
-}
+async function getCameraState(userId: string) {
+  const fileName = `state_${userId}.json`
+  try {
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .download(fileName)
 
-function getCameraState() {
-  ensureDirExists()
-  if (fs.existsSync(STATE_FILE)) {
-    try {
-      const data = fs.readFileSync(STATE_FILE, 'utf-8')
-      return JSON.parse(data)
-    } catch (err) {
-      // Fallback if parsing failed or file is empty
+    if (error) {
+      // File does not exist yet, return default state
+      return {
+        trigger: false,
+        status: 'idle',
+        analysisResult: null,
+        timestamp: 0,
+        error: null
+      }
+    }
+
+    const text = await data.text()
+    return JSON.parse(text)
+  } catch (err) {
+    console.error('Error reading camera state from Supabase:', err)
+    return {
+      trigger: false,
+      status: 'idle',
+      analysisResult: null,
+      timestamp: 0,
+      error: null
     }
   }
-  return {
-    trigger: false,
-    status: 'idle',
-    analysisResult: null,
-    timestamp: 0,
-    error: null
+}
+
+async function saveCameraState(userId: string, state: any) {
+  const fileName = `state_${userId}.json`
+  try {
+    const jsonStr = JSON.stringify(state, null, 2)
+    const buffer = Buffer.from(jsonStr, 'utf-8')
+    
+    const { error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(fileName, buffer, {
+        contentType: 'application/json',
+        upsert: true
+      })
+
+    if (error) {
+      console.error('Error uploading state to Supabase:', error)
+    }
+  } catch (err) {
+    console.error('Exception writing camera state to Supabase:', err)
   }
 }
 
-function saveCameraState(state: any) {
-  ensureDirExists()
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8')
-}
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const userId = searchParams.get('user_id') || '00000000-0000-0000-0000-000000000000'
 
-export async function GET() {
-  const state = getCameraState()
+  const state = await getCameraState(userId)
   
   // Timeout safety: if trigger is true but pending for more than 25 seconds, reset it
   if (state.trigger && state.timestamp && Date.now() - state.timestamp > 25000) {
     state.trigger = false
     state.status = 'error'
     state.error = 'Kamera ESP32-CAM offline atau tidak merespon (Timeout)'
-    saveCameraState(state)
+    await saveCameraState(userId, state)
   }
 
   return NextResponse.json(state)
@@ -52,7 +76,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { action } = body
+    const { action, userId = '00000000-0000-0000-0000-000000000000' } = body
 
     if (action === 'trigger') {
       const newState = {
@@ -62,7 +86,7 @@ export async function POST(req: Request) {
         timestamp: Date.now(),
         error: null
       }
-      saveCameraState(newState)
+      await saveCameraState(userId, newState)
       return NextResponse.json(newState)
     }
 
@@ -74,7 +98,7 @@ export async function POST(req: Request) {
         timestamp: 0,
         error: null
       }
-      saveCameraState(newState)
+      await saveCameraState(userId, newState)
       return NextResponse.json(newState)
     }
 

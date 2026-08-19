@@ -1,48 +1,65 @@
 import { NextResponse } from 'next/server'
-import fs from 'fs'
-import path from 'path'
+import { supabase } from '@/lib/supabase'
 
-const STATE_DIR = path.join(process.cwd(), 'public', 'images')
-const STATE_FILE = path.join(STATE_DIR, 'camera_state.json')
+const BUCKET_NAME = 'plant-images'
 
-function ensureDirExists() {
-  if (!fs.existsSync(STATE_DIR)) {
-    fs.mkdirSync(STATE_DIR, { recursive: true })
+async function updateCameraStateSuccess(userId: string, result: any) {
+  const fileName = `state_${userId}.json`
+  try {
+    const newState = {
+      trigger: false,
+      status: 'success',
+      analysisResult: result,
+      timestamp: Date.now(),
+      error: null
+    }
+    const jsonStr = JSON.stringify(newState, null, 2)
+    const buffer = Buffer.from(jsonStr, 'utf-8')
+    await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(fileName, buffer, {
+        contentType: 'application/json',
+        upsert: true
+      })
+  } catch (err) {
+    console.error('Failed to update camera state success in Supabase:', err)
   }
 }
 
-function updateCameraStateSuccess(result: any) {
-  ensureDirExists()
-  const newState = {
-    trigger: false,
-    status: 'success',
-    analysisResult: result,
-    timestamp: Date.now(),
-    error: null
+async function updateCameraStateError(userId: string, errorMsg: string) {
+  const fileName = `state_${userId}.json`
+  try {
+    const newState = {
+      trigger: false,
+      status: 'error',
+      analysisResult: null,
+      timestamp: Date.now(),
+      error: errorMsg
+    }
+    const jsonStr = JSON.stringify(newState, null, 2)
+    const buffer = Buffer.from(jsonStr, 'utf-8')
+    await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(fileName, buffer, {
+        contentType: 'application/json',
+        upsert: true
+      })
+  } catch (err) {
+    console.error('Failed to update camera state error in Supabase:', err)
   }
-  fs.writeFileSync(STATE_FILE, JSON.stringify(newState, null, 2), 'utf-8')
-}
-
-function updateCameraStateError(errorMsg: string) {
-  ensureDirExists()
-  const newState = {
-    trigger: false,
-    status: 'error',
-    analysisResult: null,
-    timestamp: Date.now(),
-    error: errorMsg
-  }
-  fs.writeFileSync(STATE_FILE, JSON.stringify(newState, null, 2), 'utf-8')
 }
 
 export async function POST(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const userId = searchParams.get('user_id') || '00000000-0000-0000-0000-000000000000'
+
   try {
     const formData = await req.formData()
     const file = formData.get('image') as File | null
     const base64Data = formData.get('image_base64') as string | null
 
     if (!file && !base64Data) {
-      updateCameraStateError('No image provided')
+      await updateCameraStateError(userId, 'No image provided')
       return NextResponse.json(
         { error: 'No image provided' },
         { status: 400 }
@@ -50,30 +67,32 @@ export async function POST(req: Request) {
     }
 
     let imageBase64 = ''
-    ensureDirExists()
-    const targetImagePath = path.join(STATE_DIR, 'esp32cam.jpg')
+    let buffer: Buffer
 
     if (file) {
       const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
+      buffer = Buffer.from(arrayBuffer)
       imageBase64 = buffer.toString('base64')
-      
-      // Save physical file
-      try {
-        fs.writeFileSync(targetImagePath, buffer)
-      } catch (err) {
-        console.error('Gagal menulis file gambar dari ESP32-CAM:', err)
+    } else {
+      imageBase64 = base64Data!.replace(/^data:image\/\w+;base64,/, '')
+      buffer = Buffer.from(imageBase64, 'base64')
+    }
+
+    // Save image directly to Supabase Storage (production-safe, no local disk write)
+    try {
+      const imageName = `image_${userId}.jpg`
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(imageName, buffer, {
+          contentType: 'image/jpeg',
+          upsert: true
+        })
+
+      if (uploadError) {
+        console.error('Error uploading image to Supabase Storage:', uploadError)
       }
-    } else if (base64Data) {
-      imageBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '')
-      
-      // Save physical file
-      try {
-        const buffer = Buffer.from(imageBase64, 'base64')
-        fs.writeFileSync(targetImagePath, buffer)
-      } catch (err) {
-        console.error('Gagal menulis file gambar base64:', err)
-      }
+    } catch (err) {
+      console.error('Gagal menulis file gambar ke Supabase Storage:', err)
     }
 
     const apiKey = process.env.GEMINI_API_KEY
@@ -119,7 +138,7 @@ export async function POST(req: Request) {
           const parsed = JSON.parse(cleanJsonStr)
           
           // Update camera state
-          updateCameraStateSuccess(parsed)
+          await updateCameraStateSuccess(userId, parsed)
           
           return NextResponse.json(parsed)
         }
@@ -157,12 +176,12 @@ export async function POST(req: Request) {
     }
 
     // Update camera state
-    updateCameraStateSuccess(fallbackResult)
+    await updateCameraStateSuccess(userId, fallbackResult)
 
     return NextResponse.json(fallbackResult)
   } catch (error: any) {
     console.error('Analyze error:', error)
-    updateCameraStateError(error.message || 'Gagal menganalisis gambar tanaman')
+    await updateCameraStateError(userId, error.message || 'Gagal menganalisis gambar tanaman')
     return NextResponse.json(
       { error: 'Gagal menganalisis gambar tanaman' },
       { status: 500 }
